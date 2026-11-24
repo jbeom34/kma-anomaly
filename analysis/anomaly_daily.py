@@ -9,6 +9,7 @@ WINDOW = 7             # 같은 날짜 앞뒤 며칠을 기준 구간으로 쓸�
 MIN_VALID_HOURS = 20   # 하루 중 유효 시간이 이보다 적으면 그날은 제외
 MIN_BASE = 30          # 기준 표본이 이보다 적으면 점수를 내지 않음
 Z_LIMIT = 3.0          # |z|가 이 값 이상이면 이상
+LOG_ELEMENTS = {"WS_mean"}  # 오른쪽으로 치우친 분포라 로그를 취해서 비교
 SPECS = {
     "TA_mean": ("TA", "mean"), "TA_max": ("TA", "max"), "TA_min": ("TA", "min"),
     "HM_mean": ("HM", "mean"), "WS_mean": ("WS", "mean"), "PS_mean": ("PS", "mean"),
@@ -41,7 +42,7 @@ def to_daily(h):
 
 def day_of_year_365(idx):
     """윤년 3월 이후를 하루 당겨 1~365 체계로 맞춘다."""
-    doy = idx.dayofyear.to_numpy()
+    doy = idx.day_of_year.to_numpy()
     return np.where(idx.is_leap_year & (idx.month > 2), doy - 1, doy)
 
 
@@ -52,18 +53,21 @@ def score(d):
     for name in d.columns:
         x = d[name].to_numpy()
         valid = ~np.isnan(x)
+        xt = np.log(np.clip(x, 0.1, None)) if name in LOG_ELEMENTS else x
         for i in np.where(valid)[0]:
             diff = np.abs(doy - doy[i])
             near = np.minimum(diff, 365 - diff) <= WINDOW   # 연말·연초도 이어서 계산
             base = x[near & valid & (years != years[i])]
             if len(base) < MIN_BASE:
                 continue
-            med = np.median(base)
-            mad = np.median(np.abs(base - med)) * 1.4826
+            med = np.median(base)                      # 표시용(원래 단위)
+            bt = xt[near & valid & (years != years[i])]
+            medt = np.median(bt)
+            mad = np.median(np.abs(bt - medt)) * 1.4826
             if mad == 0:
                 continue
             rows.append((d.index[i].strftime("%Y-%m-%d"), name, x[i], med,
-                         (x[i] - med) / mad, (base < x[i]).mean() * 100))
+                         (xt[i] - medt) / mad, (base < x[i]).mean() * 100))
     res = pd.DataFrame(rows, columns=["date", "element", "value", "median", "z", "pct"])
     res["flag"] = (res["z"].abs() >= Z_LIMIT).astype(int)
     return res.round({"value": 2, "median": 2, "z": 2, "pct": 1})
