@@ -9,7 +9,7 @@ DB_PATH = Path("data/kma.db")
 SRC, DST = "asos_hourly", "asos_hourly_clean"
 TEMP_COLS = ["TA", "TD", "TS", "TE_005", "TE_01", "TE_02", "TE_03"]
 CORE = ["TM", "STN", "WD", "WS", "PA", "PS", "PR", "TA", "TD", "HM", "PV",
-        "RN", "RN_STATUS", "CA_TOT", "VS", "SS", "SI",
+        "RN", "RN_STATUS", "WS_SUSPECT", "CA_TOT", "VS", "SS", "SI",
         "TS", "TE_005", "TE_01", "TE_02", "TE_03"]
 
 
@@ -18,6 +18,21 @@ def dewpoint(ta, hm):
     hm = hm.where(hm > 0)
     g = np.log(hm / 100) + 17.62 * ta / (243.12 + ta)
     return 243.12 * g / (17.62 - g)
+
+
+def mark_ws_persistence(df, min_run=8):
+    """R6: 풍속 0이 min_run시간 이상 연속된 시각을 관측 의심(1)으로 표시한다. 값은 유지."""
+    df = df.sort_values(["STN", "TM"]).reset_index(drop=True)
+    t = pd.to_datetime(df["TM"])
+    zero = df["WS"] == 0
+    new_run = (
+        (zero != zero.shift())
+        | (df["STN"] != df["STN"].shift())
+        | (t.diff() != pd.Timedelta(hours=1))   # 빠진 시각 앞뒤는 이어 붙이지 않음
+    )
+    run_len = zero.groupby(new_run.cumsum()).transform("sum")
+    df["WS_SUSPECT"] = (zero & (run_len >= min_run)).astype(int)
+    return df
 
 
 def clean(df):
@@ -57,6 +72,10 @@ def clean(df):
         df["RN"].notna(), "관측", np.where(df["IR"] == 3, "무강수", "불명")
     )
     df.loc[df["RN_STATUS"] == "무강수", "RN"] = 0.0
+
+    # R6: 지속성 검사. 풍속 0이 8시간 이상 이어지면 관측 의심으로 표시(값은 유지)
+    df = mark_ws_persistence(df)
+    log["R6  풍속 0 연속 8시간 이상 -> 관측 의심 표시(시간 수)"] = int(df["WS_SUSPECT"].sum())
     return df, log
 
 

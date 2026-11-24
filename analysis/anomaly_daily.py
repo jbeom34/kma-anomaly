@@ -21,7 +21,7 @@ CHECK_DAYS = ["2018-01-25", "2018-08-01", "2020-09-03", "2020-09-07", "2022-09-0
 def load_hourly(stn):
     with sqlite3.connect("data/kma.db") as conn:
         df = pd.read_sql(
-            "SELECT TM, TA, HM, WS, PS FROM asos_hourly_clean WHERE STN = ?",
+            "SELECT TM, TA, HM, WS, PS, WS_SUSPECT FROM asos_hourly_clean WHERE STN = ?",
             conn, params=(stn,),
         )
     df["TM"] = pd.to_datetime(df["TM"])
@@ -73,11 +73,24 @@ def score(d):
     return res.round({"value": 2, "median": 2, "z": 2, "pct": 1})
 
 
+def classify(res):
+    """풍속이 낮아서 이상인 날은 관측 의심 시각이 있으면 '관측 의심', 없으면 '저풍속(정상 범위)'."""
+    cat = np.where(res["flag"] == 1, "기상 이상", "정상")
+    low = (res["element"] == "WS_mean") & (res["z"] < 0) & (res["flag"] == 1)
+    cat = np.where(low & (res["ws_suspect_hours"] > 0), "관측 의심", cat)
+    cat = np.where(low & (res["ws_suspect_hours"] == 0), "저풍속(정상 범위)", cat)
+    return cat
+
+
 def main():
-    d = to_daily(load_hourly(STN))
+    h = load_hourly(STN)
+    d = to_daily(h)
+    sus = h["WS_SUSPECT"].groupby(h.index.strftime("%Y-%m-%d")).sum()
     print(f"일 자료 {len(d)}일 (유효 시간 {MIN_VALID_HOURS}시간 미만인 날은 해당 요소에서 제외)")
     res = score(d)
     res.insert(0, "STN", STN)
+    res["ws_suspect_hours"] = res["date"].map(sus).fillna(0).astype(int)
+    res["category"] = classify(res)
     with sqlite3.connect("data/kma.db") as conn:
         res.to_sql("anomaly_daily", conn, if_exists="replace", index=False)
 
@@ -88,9 +101,16 @@ def main():
     t["비율(%)"] = (t["sum"] / t["count"] * 100).round(1)
     print(t.to_string())
 
-    print("\n=== |z|가 큰 상위 20건 ===")
-    top = res.reindex(res["z"].abs().sort_values(ascending=False).index).head(20)
+    print("\n=== 구분별 건수 ===")
+    print(res["category"].value_counts().to_string())
+
+    print("\n=== 기상 이상 |z| 상위 20건 ===")
+    real = res[res["category"] == "기상 이상"]
+    top = real.reindex(real["z"].abs().sort_values(ascending=False).index).head(20)
     print(top[["date", "element", "value", "median", "z", "pct"]].to_string(index=False))
+
+    print("\n=== 관측 의심으로 분류된 날(풍속) ===")
+    print(res[res["category"] == "관측 의심"][["date", "value", "ws_suspect_hours"]].to_string(index=False))
 
     print("\n=== 확인용 날짜 ===")
     chk = res[res["date"].isin(CHECK_DAYS)].sort_values(["date", "element"])
