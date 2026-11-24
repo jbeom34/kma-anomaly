@@ -4,8 +4,10 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "kma.db"
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 ELEMENTS = {"TA_mean", "TA_max", "TA_min", "HM_mean", "WS_mean", "PS_mean"}
 CATEGORIES = {"기상 이상", "관측 의심", "저풍속(정상 범위)", "정상"}
@@ -20,6 +22,11 @@ def query(sql, params=()):
     with sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(WEB_DIR / "index.html")
 
 
 @app.get("/health")

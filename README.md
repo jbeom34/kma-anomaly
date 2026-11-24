@@ -39,3 +39,28 @@
 - 징후 판정 2건(2018-10-15~31, 2025-12-16~29)은 풍속계 교체 이력(2018-10-27, 2025-12-26)과 일치
 - 설계 수정: 처음에는 7일 이상 연속을 기준으로 해서 단발 정온 2건(2018-11-29, 2022-04-03)이 오판정됨. 단발 1회는 7일 창에서 최대 7일만 지속하므로 기준을 8일 이상으로 상향. 2022-04 구간은 기상청 지속한계 초과 경보와 같은 시간대였고 정비 없이 자동 소멸
 - 실시간 경보는 8일째에 나가므로 교체 5일 전(2018), 3일 전(2025). 후향 분석이며 사례가 2건이라 일반화에는 한계
+
+## 실행 방법
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # KMA_AUTH_KEY에 기상청 API허브 인증키 입력
+
+python collector/fetch_asos_hourly.py 159 2015 2025   # 과거 자료 수집
+python collector/load_asos_to_db.py                   # 파싱 후 SQLite 적재
+python collector/clean_asos.py                        # 결측 정리(R1~R6)
+python analysis/anomaly_daily.py                      # 일 단위 이상 탐지
+python analysis/sensor_health.py                      # 풍속계 건강도
+
+uvicorn app.main:app --host 127.0.0.1 --port 8000     # http://localhost:8000
+```
+
+## API
+| 주소 | 설명 |
+|---|---|
+| `/` | 대시보드 |
+| `/docs` | API 문서(Swagger) |
+| `/api/summary` | 구분별 건수, 센서 경보 일수, 자료 기간 |
+| `/api/anomalies` | 이상 목록(기간·요소·구분 필터) |
+| `/api/anomalies/{date}` | 그날의 요소별 점수 |
+| `/api/sensor-health` | 풍속계 건강도 일별 값 |
