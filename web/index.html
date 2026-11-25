@@ -30,6 +30,12 @@ tbody tr.row:hover{background:var(--card)}
 .chartbox{position:relative;height:340px}
 .note{color:var(--muted);font-size:13px}
 .err{color:#d1242f;min-height:1.4em}
+#recentTable th,#recentTable td{text-align:center}
+#recentTable th:first-child,#recentTable td:first-child{text-align:left}
+.z3{background:rgba(226,75,74,.28);font-weight:600}
+.z2{background:rgba(239,159,39,.25)}
+.zsus{background:rgba(127,119,221,.28)}
+.zna{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -38,6 +44,26 @@ tbody tr.row:hover{background:var(--card)}
   <p class="sub">부산 종관기상관측(ASOS) 2015~2025 · 같은 날짜 앞뒤 7일의 다른 해 분포와 비교한 일 단위 이상 탐지</p>
   <div id="cards" class="cards"></div>
   <p id="msg" class="err"></p>
+
+  <h2>최근 자료 비교</h2>
+  <p id="recentNote" class="note"></p>
+  <div class="filters">
+    <label>기간
+      <select id="recentDays">
+        <option value="7">최근 7일</option>
+        <option value="30" selected>최근 30일</option>
+        <option value="90">최근 90일</option>
+        <option value="366">올해 전체</option>
+      </select>
+    </label>
+  </div>
+  <div class="wrap">
+    <table id="recentTable">
+      <thead><tr><th>날짜</th><th>일평균기온</th><th>일최고기온</th><th>일최저기온</th><th>평균습도</th><th>평균풍속</th><th>평균해면기압</th></tr></thead>
+      <tbody id="recentRows"></tbody>
+    </table>
+  </div>
+  <p class="note">칸의 숫자는 점수(z)로, 같은 날짜 앞뒤 7일의 과거 분포보다 얼마나 벗어났는지를 뜻합니다. 3 이상(빨강)이 이상, 2 이상(주황)은 주의입니다. 관측 의심은 보라색입니다. 칸에 마우스를 올리면 값과 평년(중앙값)이 보이고, 행을 누르면 아래에 그날의 점수가 나옵니다. 아래 이상 목록은 2015~2025년 자료입니다.</p>
 
   <h2>이상 목록</h2>
   <div class="filters">
@@ -195,9 +221,52 @@ async function loadHealth() {
   });
 }
 
+function zText(z) {
+  const v = Math.round(z * 10) / 10;
+  return v > 0 ? `+${v.toFixed(1)}` : v < 0 ? v.toFixed(1) : "0.0";
+}
+
+const RECENT_ORDER = ["TA_mean", "TA_max", "TA_min", "HM_mean", "WS_mean", "PS_mean"];
+
+async function loadRecent() {
+  const d = await api("/api/recent", new URLSearchParams({ days: $("recentDays").value }));
+  const byDate = new Map();
+  for (const r of d.rows) {
+    if (!byDate.has(r.date)) byDate.set(r.date, {});
+    byDate.get(r.date)[r.element] = r;
+  }
+  const tbody = $("recentRows");
+  tbody.replaceChildren();
+  let over = 0;
+  for (const [date, els] of byDate) {
+    const tr = document.createElement("tr");
+    tr.className = "row";
+    tr.onclick = () => loadDay(date);
+    tr.append(cell(date));
+    for (const el of RECENT_ORDER) {
+      const r = els[el];
+      const c = cell(r ? zText(r.z) : "-");
+      if (!r) {
+        c.className = "zna";
+      } else {
+        const a = Math.abs(r.z);
+        if (r.category === "관측 의심") c.className = "zsus";
+        else if (a >= 3) c.className = "z3";
+        else if (a >= 2) c.className = "z2";
+        if (a >= 3) over++;
+        c.title = `${LABEL[el]} ${fmt(r.value)} · 평년 ${fmt(r.median)} · ${r.category}`;
+      }
+      tr.append(c);
+    }
+    tbody.append(tr);
+  }
+  $("recentNote").textContent =
+    `비교 기간 ${d.start} ~ ${d.latest} · 기준 분포 ${d.baseline}년 · 기준을 넘은 칸 ${over}개`;
+}
+
 async function loadAll() {
   $("msg").textContent = "";
-  for (const job of [loadAnomalies, loadHealth]) {
+  for (const job of [loadRecent, loadAnomalies, loadHealth]) {
     try { await job(); } catch (e) { $("msg").textContent = e.message; }
   }
 }
@@ -208,6 +277,7 @@ for (const [k, v] of Object.entries(LABEL)) {
   o.textContent = v;
   $("element").append(o);
 }
+$("recentDays").onchange = () => loadRecent().catch(e => { $("msg").textContent = e.message; });
 $("go").onclick = loadAll;
 loadSummary().catch(e => { $("msg").textContent = e.message; });
 loadAll();
